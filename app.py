@@ -9,17 +9,10 @@ import io
 import math
 import time
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
+st.set_page_config(page_title="Memory Lens", page_icon="📸", layout="wide")
 
-st.set_page_config(page_title="Hy My Day", page_icon="📸", layout="wide")
-
-APP_NAME = "Hy My Day"
+APP_NAME = "Memory Lens"
 MODEL_NAME = "gpt-4o-mini"
 
 SHORT_TIME_GAP_MINUTES = 5
@@ -28,7 +21,7 @@ DISTANCE_GAP_METERS = 150
 ACTIVITY_DISTANCE_GAP_METERS = 500
 
 
-st.title("📸 Hy My Day")
+st.title("📸 Memory Lens")
 st.subheader("사진으로 하루를 기억해주는 나만의 AI Agent")
 st.write("---")
 
@@ -80,7 +73,7 @@ user_memo = st.text_area(
     height=100
 )
 
-geolocator = Nominatim(user_agent="hy_my_day_photo_diary_agent")
+geolocator = Nominatim(user_agent="memory_lens_photo_diary_agent")
 
 
 def get_exif(image):
@@ -208,15 +201,6 @@ def make_thumbnail(image, max_width=360):
     return img
 
 
-def image_to_pdf_buffer(image, max_width=1200):
-    img = image.copy().convert("RGB")
-    img.thumbnail((max_width, max_width))
-    buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=85)
-    buffer.seek(0)
-    return buffer
-
-
 def load_photos(files):
     photos = []
 
@@ -238,41 +222,10 @@ def load_photos(files):
             "time_text": format_korean_time(photo_time),
             "gps": gps,
             "address": address,
-            "user_note": ""
+            "event_note": ""
         })
 
     photos.sort(key=lambda x: x["time"] or datetime.max)
-    return photos
-
-
-def add_photo_notes_ui(photos):
-    st.write("## 📝 사진별 첨언")
-    st.caption(
-        "사진만으로 알기 어려운 상황을 적어주세요. "
-        "예: 친구들과 낚시 시작, 축구 경기 후 단체사진, 가족 생일 식사, 카페에서 공부함 등"
-    )
-
-    for idx, photo in enumerate(photos):
-        with st.expander(f"{idx + 1}. {photo['file_name']} / {photo['time_text']}", expanded=False):
-            col1, col2 = st.columns([1, 3])
-
-            with col1:
-                st.image(
-                    make_thumbnail(photo["image"], 220),
-                    caption=photo["time_text"],
-                    use_container_width=False
-                )
-
-            with col2:
-                st.write(f"**위치:** {photo['address']}")
-                note = st.text_area(
-                    "이 사진에 대해 GPT가 참고할 내용을 적어주세요.",
-                    placeholder="예: 낚시 시작 전에 찍은 사진. 친구들과 방파제에 도착했다.",
-                    key=f"photo_note_{idx}_{photo['file_name']}",
-                    height=90
-                )
-                photo["user_note"] = note.strip()
-
     return photos
 
 
@@ -343,29 +296,54 @@ def group_address(group):
     return "위치 정보 없음"
 
 
-def make_photo_notes_text(group):
-    note_text = ""
+def add_event_notes_ui(groups):
+    st.write("## 📝 이벤트별 메모")
+    st.caption(
+        "AI가 상황을 더 잘 이해하도록 힌트를 적어주세요. "
+        "이 내용은 최종 결과에 그대로 들어가지 않고, GPT가 추론할 때만 참고합니다."
+    )
 
-    for i, photo in enumerate(group, start=1):
-        note = photo.get("user_note", "")
-        if not note:
-            note = "사용자 첨언 없음"
+    for idx, group in enumerate(groups, start=1):
+        with st.expander(
+            f"Event {idx} | {group_time_text(group)} | {group_address(group)} | 사진 {len(group)}장",
+            expanded=False
+        ):
+            cols = st.columns(min(len(group), 6))
 
-        note_text += (
-            f"[사진 {i}]\n"
-            f"파일명: {photo['file_name']}\n"
-            f"촬영 시간: {photo['time_text']}\n"
-            f"위치: {photo['address']}\n"
-            f"사용자 첨언: {note}\n\n"
-        )
+            for i, photo in enumerate(group):
+                with cols[i % len(cols)]:
+                    st.image(
+                        make_thumbnail(photo["image"], 260),
+                        caption=photo["time_text"],
+                        width="content"
+                    )
 
-    return note_text
+            event_note = st.text_area(
+                f"Event {idx} 메모",
+                placeholder="예: 친구들과 낚시하러 방파제에 도착함. 시작할 때와 끝날 때만 사진을 찍음.",
+                key=f"event_note_{idx}",
+                height=100
+            )
+
+            for photo in group:
+                photo["event_note"] = event_note.strip()
+
+    return groups
+
+
+def make_event_note_text(group):
+    note = group[0].get("event_note", "")
+
+    if not note:
+        return "사용자 이벤트 메모 없음"
+
+    return note
 
 
 def analyze_event(client, group, event_index, user_name):
     time_text = group_time_text(group)
     address = group_address(group)
-    photo_notes_text = make_photo_notes_text(group)
+    event_note_text = make_event_note_text(group)
 
     content = [{
         "type": "input_text",
@@ -381,8 +359,8 @@ def analyze_event(client, group, event_index, user_name):
 위치: {address}
 사진 수: {len(group)}장
 
-사진별 사용자 첨언:
-{photo_notes_text}
+사용자 이벤트 메모:
+{event_note_text}
 
 출력 형식:
 시간: {time_text}
@@ -391,13 +369,15 @@ def analyze_event(client, group, event_index, user_name):
 
 작성 규칙:
 - 반드시 위 출력 형식 그대로 써.
-- 사용자가 적은 사진별 첨언은 사진보다 더 중요한 맥락 정보로 보고, 기록에 자연스럽게 반영해.
-- 사진 속 인물을 무조건 사용자로 단정하지 마. 다만 사용자가 첨언에서 본인, 가족, 친구, 동료 등 관계를 알려준 경우에는 그 정보를 활용해도 돼.
-- 위치는 단순 주소가 아니라, 사진 속 간판, 메뉴판, 음식, 풍경, 물건, 사용자 첨언 등을 보고 특정 식당/카페/장소명을 유추할 수 있으면 자세히 써줘.
+- 사용자 이벤트 메모는 사진보다 더 중요한 맥락 정보로 참고해.
+- 단, 사용자 이벤트 메모를 결과에 그대로 복사하지 마.
+- 메모는 추론을 돕는 clue로만 사용하고, 최종 기록은 자연스러운 일기 문장으로 다시 작성해.
+- 사진 속 인물을 무조건 사용자로 단정하지 마. 다만 사용자가 메모에서 본인, 가족, 친구, 동료 등 관계를 알려준 경우에는 그 정보를 활용해도 돼.
+- 위치는 단순 주소가 아니라, 사진 속 간판, 메뉴판, 음식, 풍경, 물건, 사용자 메모 등을 보고 특정 식당/카페/장소명을 유추할 수 있으면 자세히 써줘.
 - 여러 사진을 종합해서 카페, 음식, 산책, 쇼핑, 바다, 이동, 작업, 공부, 식사, 낚시, 운동, 축구, 야외활동 등을 추측해.
 - 만약 사진 간 시간이 1~3시간 정도 차이 나더라도 같은 장소와 같은 활동으로 보이면, 그 시간 동안 활동이 이어진 것으로 자연스럽게 서술해.
 - 확실하지 않은 내용은 "~로 보여요.", "~하신 것 같아요.", "~했을 가능성이 있어요."라고 써.
-- 첨언에 없는 사람의 이름, 신원, 개인정보는 새로 만들어내지 마.
+- 메모에 없는 사람의 이름, 신원, 개인정보는 새로 만들어내지 마.
 - 좌표는 쓰지 마.
 - 5문장 이상으로 작성해.
 """
@@ -436,7 +416,7 @@ def summarize_day(client, event_records, memo, user_name):
 - 반드시 "{user_name}님은 오늘"로 시작해.
 - 시간 흐름에 따라 하루를 자연스럽게 연결해.
 - 위치 이동, 카페, 식사, 산책, 쇼핑, 풍경 감상, 낚시, 운동 같은 활동을 포함해.
-- 사용자가 직접 남긴 메모와 사진별 첨언에서 나온 정보는 자연스럽게 반영해.
+- 사용자가 직접 남긴 전체 메모는 참고하되, 그대로 복사하지 말고 자연스럽게 반영해.
 - 사진 사이 시간이 길어도 같은 활동으로 이어진 경우에는 하나의 흐름으로 설명해.
 - 확실하지 않은 내용은 추측처럼 표현해.
 - 1년 뒤에 읽어도 이날 무엇을 했는지 떠올릴 수 있게 써.
@@ -451,121 +431,16 @@ def summarize_day(client, event_records, memo, user_name):
     return response.output_text.strip()
 
 
-def get_pdf_font_name():
-    candidates = [
-        "C:/Windows/Fonts/malgun.ttf",
-        "C:/Windows/Fonts/malgunbd.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-    ]
-
-    for path in candidates:
-        try:
-            pdfmetrics.registerFont(TTFont("KoreanFont", path))
-            return "KoreanFont"
-        except Exception:
-            continue
-
-    return "Helvetica"
-
-
-def create_pdf_bytes(groups, event_records, day_summary, user_memo, user_name):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=18 * mm,
-        leftMargin=18 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm
-    )
-
-    font_name = get_pdf_font_name()
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        "TitleKorean",
-        parent=styles["Title"],
-        fontName=font_name,
-        fontSize=20,
-        leading=26,
-        spaceAfter=14
-    )
-
-    heading_style = ParagraphStyle(
-        "HeadingKorean",
-        parent=styles["Heading2"],
-        fontName=font_name,
-        fontSize=14,
-        leading=20,
-        spaceBefore=12,
-        spaceAfter=8
-    )
-
-    body_style = ParagraphStyle(
-        "BodyKorean",
-        parent=styles["BodyText"],
-        fontName=font_name,
-        fontSize=10.5,
-        leading=17,
-        spaceAfter=8
-    )
-
-    story = []
-    story.append(Paragraph(f"Hy My Day - {user_name}님의 AI 사진 일기", title_style))
-    story.append(Spacer(1, 6))
-
-    for idx, group in enumerate(groups, start=1):
-        story.append(Paragraph(f"Event {idx}", heading_style))
-        story.append(Paragraph(f"시간: {group_time_text(group)}", body_style))
-        story.append(Paragraph(f"위치: {group_address(group)}", body_style))
-
-        notes = []
-        for photo in group:
-            note = photo.get("user_note", "")
-            if note:
-                notes.append(f"- {photo['file_name']}: {note}")
-
-        if notes:
-            story.append(Paragraph("사용자 첨언", heading_style))
-            story.append(Paragraph("<br/>".join(notes), body_style))
-
-        for photo in group[:4]:
-            img_buffer = image_to_pdf_buffer(photo["image"])
-            rl_img = RLImage(img_buffer, width=70 * mm, height=52 * mm)
-            rl_img.hAlign = "LEFT"
-            story.append(rl_img)
-            story.append(Spacer(1, 4))
-
-        safe_text = event_records[idx - 1].replace("\n", "<br/>")
-        story.append(Paragraph(safe_text, body_style))
-        story.append(Spacer(1, 10))
-
-    story.append(PageBreak())
-    story.append(Paragraph("AI 하루 요약", heading_style))
-
-    if user_memo.strip():
-        story.append(Paragraph("사용자 메모", heading_style))
-        story.append(Paragraph(user_memo.replace("\n", "<br/>"), body_style))
-
-    story.append(Paragraph(day_summary.replace("\n", "<br/>"), body_style))
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
 if uploaded_files:
     with st.spinner("사진의 시간·위치 정보를 읽는 중입니다..."):
         photos = load_photos(uploaded_files)
-
-    photos = add_photo_notes_ui(photos)
 
     with st.spinner("사진을 이벤트로 묶는 중입니다..."):
         groups = group_photos(photos)
 
     st.success(f"총 {len(photos)}장의 사진을 {len(groups)}개의 이벤트로 묶었습니다.")
+
+    groups = add_event_notes_ui(groups)
 
     st.write("## 📌 이벤트 미리보기")
 
@@ -577,25 +452,11 @@ if uploaded_files:
 
             for i, photo in enumerate(group):
                 with cols[i % len(cols)]:
-                    caption = photo["time_text"]
-                    if photo.get("user_note"):
-                        caption += " / 첨언 있음"
-
                     st.image(
                         make_thumbnail(photo["image"], 280),
-                        caption=caption,
-                        use_container_width=False
+                        caption=photo["time_text"],
+                        width="content"
                     )
-
-            notes_in_group = [
-                f"- {photo['file_name']}: {photo['user_note']}"
-                for photo in group
-                if photo.get("user_note")
-            ]
-
-            if notes_in_group:
-                st.write("**사용자 첨언**")
-                st.markdown("\n".join(notes_in_group))
 
     st.write("---")
 
@@ -623,25 +484,11 @@ if uploaded_files:
 
             for i, photo in enumerate(group):
                 with cols[i % len(cols)]:
-                    caption = photo["time_text"]
-                    if photo.get("user_note"):
-                        caption += " / 첨언 있음"
-
                     st.image(
                         make_thumbnail(photo["image"], 300),
-                        caption=caption,
-                        use_container_width=False
+                        caption=photo["time_text"],
+                        width="content"
                     )
-
-            notes_in_group = [
-                f"- {photo['file_name']}: {photo['user_note']}"
-                for photo in group
-                if photo.get("user_note")
-            ]
-
-            if notes_in_group:
-                st.write("**사용자 첨언**")
-                st.markdown("\n".join(notes_in_group))
 
             st.markdown(event_records[idx - 1])
             st.write("---")
@@ -657,24 +504,10 @@ if uploaded_files:
         st.download_button(
             label="📄 TXT로 다운로드",
             data=diary_text,
-            file_name="hy_my_day_diary.txt",
+            file_name="memory_lens_diary.txt",
             mime="text/plain"
-        )
-
-        pdf_bytes = create_pdf_bytes(
-            groups=groups,
-            event_records=event_records,
-            day_summary=day_summary,
-            user_memo=user_memo,
-            user_name=user_name
-        )
-
-        st.download_button(
-            label="📕 PDF로 다운로드",
-            data=pdf_bytes,
-            file_name="hy_my_day_diary.pdf",
-            mime="application/pdf"
         )
 
 else:
     st.info("사진을 업로드하면 AI가 하루 기록을 만들어줍니다.")
+
