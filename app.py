@@ -10,6 +10,7 @@ import math
 import time
 
 
+
 st.set_page_config(page_title="Memory Lens", page_icon="📸", layout="wide")
 
 APP_NAME = "Memory Lens"
